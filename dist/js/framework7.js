@@ -10,7 +10,7 @@
  * 
  * Licensed under MIT
  * 
- * Released on: February 27, 2016
+ * Released on: October 28, 2016
  */
 (function () {
 
@@ -47,6 +47,7 @@
             fastClicks: true,
             fastClicksDistanceThreshold: 10,
             fastClicksDelayBetweenClicks: 50,
+            fastClicksExclude: '', // CSS selector
             // Tap Hold
             tapHold: false,
             tapHoldDelay: 750,
@@ -2177,7 +2178,8 @@
                     next(content);
                 }
             },
-            preroute: function(view, options) {
+            preroute: function(view, options, isBack) {
+                if (isBack) options.isBack = true;
                 app.pluginHook('routerPreroute', view, options);
                 if ((app.params.preroute && app.params.preroute(view, options) === false) || (view && view.params.preroute && view.params.preroute(view, options) === false)) {
                     return true;
@@ -2278,7 +2280,6 @@
                 pushState = options.pushState;
         
             if (typeof animatePages === 'undefined') animatePages = view.params.animatePages;
-        
             // Plugin hook
             app.pluginHook('routerLoad', view, options);
         
@@ -2608,10 +2609,10 @@
         };
         
         app.router.load = function (view, options) {
+            options = options || {};
             if (app.router.preroute(view, options)) {
                 return false;
             }
-            options = options || {};
             var url = options.url;
             var content = options.content;
             var pageName = options.pageName;
@@ -3007,10 +3008,10 @@
         
         };
         app.router.back = function (view, options) {
-            if (app.router.preroute(view, options)) {
+            options = options || {};
+            if (app.router.preroute(view, options, true)) {
                 return false;
             }
-            options = options || {};
             var url = options.url;
             var content = options.content;
             var pageName = options.pageName;
@@ -6605,7 +6606,7 @@
             }
         
             // Remove active class from old tabs
-            var oldTab = tabs.children('.tab.active').removeClass('active');
+            var oldTab = tabs.children('.tab.active').removeClass('active').trigger('hide');
             // Add active class to new tab
             newTab.addClass('active');
             // Trigger 'show' event on new tab
@@ -6807,6 +6808,7 @@
                 var $el = $(el);
                 if (el.nodeName.toLowerCase() === 'input' && el.type === 'file') return false;
                 if ($el.hasClass('no-fastclick') || $el.parents('.no-fastclick').length > 0) return false;
+                if (app.params.fastClicksExclude && $el.is(app.params.fastClicksExclude)) return false;
                 return true;
             }
             function targetNeedsFocus(el) {
@@ -7807,7 +7809,7 @@
             if (e.type === 'change' && !form.hasClass('ajax-submit-onchange')) return;
             if (e.type === 'submit') e.preventDefault();
             
-            var method = form.attr('method') || 'GET';
+            var method = (form.attr('method') || 'GET').toUpperCase();
             var contentType = form.prop('enctype') || form.attr('enctype');
         
             var url = form.attr('action');
@@ -8090,16 +8092,20 @@
                 pageContainer.on('pageBeforeRemove', destroySwiper);
             }
             swipers.each(function () {
-                var swiper = $(this);
+                var swiper = $(this), initialSlide;
+                var params;
                 if (swiper.hasClass('tabs-swipeable-wrap')) {
                     swiper.addClass('swiper-container').children('.tabs').addClass('swiper-wrapper').children('.tab').addClass('swiper-slide');
+                    initialSlide = swiper.children('.tabs').children('.tab.active').index();
                 }
-                var params;
                 if (swiper.data('swiper')) {
                     params = JSON.parse(swiper.data('swiper'));
                 }
                 else {
                     params = swiper.dataset();
+                }
+                if (typeof params.initialSlide === 'undefined' && typeof initialSlide !== 'undefined') {
+                    params.initialSlide = initialSlide;
                 }
                 if (swiper.hasClass('tabs-swipeable-wrap')) {
                     params.onSlideChangeStart = function (s) {
@@ -8206,7 +8212,7 @@
                 '<div class="navbar">' +
                     '<div class="navbar-inner">' +
                         '<div class="left sliding">' +
-                            '<a href="#" class="link close-popup photo-browser-close-link {{#unless backLinkText}}icon-only{{/unless}} {{js "this.type === \'page\' ? \'back\' : \'\'"}}">' +
+                            '<a href="#" class="link ' + (params.type === 'popup' ? 'close-popup' : 'photo-browser-close-link')+ ' {{#unless backLinkText}}icon-only{{/unless}} {{js "this.type === \'page\' ? \'back\' : \'\'"}}">' +
                                 '<i class="icon icon-back {{iconsColorClass}}"></i>' +
                                 '{{#if backLinkText}}<span>{{backLinkText}}</span>{{/if}}' +
                             '</a>' +
@@ -12021,6 +12027,9 @@
                 }
                 return new Dom7(prevEls);
             },
+            siblings: function (selector) {
+                return this.nextAll(selector).add(this.prevAll(selector));
+            },
             parent: function (selector) {
                 var parents = [];
                 for (var i = 0; i < this.length; i++) {
@@ -12107,6 +12116,18 @@
                     }
                 }
                 return dom;
+            },
+            empty: function () {
+                for (var i = 0; i < this.length; i++) {
+                    var el = this[i];
+                    if (el.nodeType === 1) {
+                        for (var j = 0; j < el.childNodes.length; j++) {
+                            if (el.childNodes[j].parentNode) el.childNodes[j].parentNode.removeChild(el.childNodes[j]);
+                        }
+                        el.textContent = '';
+                    }
+                }
+                return this;
             }
         };
         
@@ -12405,12 +12426,13 @@
         (function () {
             var methods = ('get post getJSON').split(' ');
             function createMethod(method) {
-                $[method] = function (url, data, success) {
+                $[method] = function (url, data, success, error) {
                     return $.ajax({
                         url: url,
                         method: method === 'post' ? 'POST' : 'GET',
                         data: typeof data === 'function' ? undefined : data,
                         success: typeof data === 'function' ? data : success,
+                        error: typeof data === 'function' ? success : error,
                         dataType: method === 'getJSON' ? 'json' : undefined
                     });
                 };
